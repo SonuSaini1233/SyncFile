@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// Cloud Firestore Security Rules for SyncFile
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: checks if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: checks if user is the resource owner
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Helper: validate file metadata schema
+    function isValidFileMetadata(userId) {
+      let data = request.resource.data;
+      return data.ownerUid == userId
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 255
+        && data.size is int && data.size > 0 && data.size <= 20 * 1024 * 1024
+        && data.storagePath is string && data.storagePath.matches('users/' + userId + '/files/.*');
+    }
+
+    // 1. User Profiles collection
+    match /users/{userId} {
+      // Students can read their own profile
+      allow read: if isOwner(userId);
+
+      // Create new profile on initial Google sign-in
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && request.resource.data.totalStorageUsedBytes == 0
+                    && request.resource.data.storageLimitBytes == 20 * 1024 * 1024;
+
+      // Update allowed ONLY for safe profile fields.
+      // Quota fields (totalStorageUsedBytes, storageLimitBytes) CANNOT be arbitrarily updated by clients!
+      allow update: if isOwner(userId)
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['storageLimitBytes']))
+                    // If client-side quota transaction is permitted, totalStorageUsedBytes must stay within 0 and 20MB
+                    && request.resource.data.totalStorageUsedBytes >= 0
+                    && request.resource.data.totalStorageUsedBytes <= 20 * 1024 * 1024;
+
+      // Profiles cannot be deleted directly by clients
+      allow delete: if false;
+
+      // 2. User Files subcollection: users/{userId}/files/{fileId}
+      match /files/{fileId} {
+        // Students can only read their own files
+        allow read: if isOwner(userId);
+
+        // Create file metadata: must match student ownership, schema, and 20MB limit
+        allow create: if isOwner(userId) && isValidFileMetadata(userId);
+
+        // Overwrites and changes of ownership/paths are strictly prohibited
+        allow update: if false;
+
+        // Delete allowed only by file owner
+        allow delete: if isOwner(userId);
+
+        // Binary chunks subcollection for direct Firestore file storage
+        match /chunks/{chunkId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId)
+                        && request.resource.data.size > 0
+                        && request.resource.data.size <= 1024 * 1024;
+          allow update: if false;
+          allow delete: if isOwner(userId);
+        }
+      }
+
+      // 3. User Quota Reservations: users/{userId}/quota_reservations/{reservationId}
+      match /quota_reservations/{reservationId} {
+        // Owner can read and manage their own reservations during upload lifecycles
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+                      && request.resource.data.fileSizeBytes > 0
+                      && request.resource.data.fileSizeBytes <= 20 * 1024 * 1024;
+        allow update: if false;
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Backend-only global collections (protected from all direct client writes)
+    match /system_quotas/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

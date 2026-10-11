@@ -1,0 +1,47 @@
+rules_version = '2';
+
+// Cloud Storage Security Rules for SyncFile
+// Private storage hierarchy: users/{userId}/files/{fileId}/{fileName}
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper: checks if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: checks if user is the legitimate owner of this path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Helper: validates file size does not exceed 20 MB (20,971,520 bytes) and is non-zero
+    function isValidSize() {
+      return request.resource.size > 0 && request.resource.size <= 20 * 1024 * 1024;
+    }
+
+    // Student private file storage root
+    match /users/{userId}/files/{fileId}/{fileName} {
+      // 1. Read: Authenticated student can only read/download their own files
+      allow read: if isOwner(userId);
+
+      // 2. Create: Authenticated student can upload a new file strictly under their own folder
+      //    Must not exceed 20 MB, must not overwrite an existing file (resource == null)
+      allow create: if isOwner(userId)
+                    && isValidSize()
+                    && resource == null;
+
+      // 3. Update: Overwrites are strictly prohibited to prevent accidental or malicious file corruption
+      allow update: if false;
+
+      // 4. Delete: Authenticated student can only delete their own files
+      allow delete: if isOwner(userId);
+    }
+
+    // Deny all other unmatched paths by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
