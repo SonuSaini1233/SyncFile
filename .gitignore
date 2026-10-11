@@ -8,7 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 # Environment files (Keep private secrets out of Git)
 .env
-.env.local
+.env.example
 .env.*.local
 
 node_modules
