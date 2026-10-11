@@ -6,11 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-# Environment files (Keep private secrets out of Git)
+# Environment files (Keep all private credentials and templates out of Git)
 .env
-.env.example
-.env.*.local
-.env.example
+.env.*
 
 node_modules
 dist
